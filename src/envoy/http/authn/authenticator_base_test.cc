@@ -89,16 +89,17 @@ class ValidateX509Test : public testing::TestWithParam<iaapi::MutualTls::Mode>,
   virtual ~ValidateX509Test() {}
 
   NiceMock<Envoy::Network::MockConnection> connection_{};
-  Envoy::Http::RequestHeaderMapImpl header_{};
+  Http::RequestHeaderMapPtr header_ =
+      Envoy::Http::RequestHeaderMapImpl::create();
   FilterConfig filter_config_{};
   FilterContext filter_context_{
-      envoy::config::core::v3::Metadata::default_instance(), header_,
+      envoy::config::core::v3::Metadata::default_instance(), *header_,
       &connection_, filter_config_};
 
   MockAuthenticatorBase authenticator_{&filter_context_};
 
   void SetUp() override {
-    mtls_params_.set_mode(GetParam());
+    mtls_params_.set_mode(ValidateX509Test::GetParam());
     payload_ = new Payload();
   }
 
@@ -113,7 +114,7 @@ class ValidateX509Test : public testing::TestWithParam<iaapi::MutualTls::Mode>,
 
 TEST_P(ValidateX509Test, PlaintextConnection) {
   // Should return false except mode is PERMISSIVE (accept plaintext)
-  if (GetParam() == iaapi::MutualTls::PERMISSIVE) {
+  if (ValidateX509Test::GetParam() == iaapi::MutualTls::PERMISSIVE) {
     EXPECT_TRUE(authenticator_.validateX509(mtls_params_, payload_));
   } else {
     EXPECT_FALSE(authenticator_.validateX509(mtls_params_, payload_));
@@ -127,7 +128,7 @@ TEST_P(ValidateX509Test, SslConnectionWithNoPeerCert) {
   EXPECT_CALL(Const(connection_), ssl()).WillRepeatedly(Return(ssl));
 
   // Should return false except mode is PERMISSIVE (accept plaintext).
-  if (GetParam() == iaapi::MutualTls::PERMISSIVE) {
+  if (ValidateX509Test::GetParam() == iaapi::MutualTls::PERMISSIVE) {
     EXPECT_TRUE(authenticator_.validateX509(mtls_params_, payload_));
   } else {
     EXPECT_FALSE(authenticator_.validateX509(mtls_params_, payload_));
@@ -231,9 +232,10 @@ class ValidateJwtTest : public testing::Test,
   // StrictMock<Envoy::RequestInfo::MockRequestInfo> request_info_{};
   envoy::config::core::v3::Metadata dynamic_metadata_;
   NiceMock<Envoy::Network::MockConnection> connection_{};
-  Envoy::Http::RequestHeaderMapImpl header_{};
+  Http::RequestHeaderMapPtr header_ =
+      Envoy::Http::RequestHeaderMapImpl::create();
   FilterConfig filter_config_{};
-  FilterContext filter_context_{dynamic_metadata_, header_, &connection_,
+  FilterContext filter_context_{dynamic_metadata_, *header_, &connection_,
                                 filter_config_};
   MockAuthenticatorBase authenticator_{&filter_context_};
 
@@ -307,8 +309,9 @@ TEST_F(ValidateJwtTest, NoJwtPayloadOutput) {
 TEST_F(ValidateJwtTest, HasJwtPayloadOutputButNoDataForKey) {
   jwt_.set_issuer("issuer@foo.com");
 
-  (*dynamic_metadata_.mutable_filter_metadata())[Utils::IstioFilterName::kJwt]
-      .MergeFrom(MessageUtil::keyValueStruct("foo", "bar"));
+  (*dynamic_metadata_.mutable_filter_metadata())
+      [Extensions::HttpFilters::HttpFilterNames::get().JwtAuthn]
+          .MergeFrom(MessageUtil::keyValueStruct("foo", "bar"));
 
   // When there is no JWT payload for given issuer in request info dynamic
   // metadata, validateJwt() should return nullptr and failure.
@@ -318,8 +321,9 @@ TEST_F(ValidateJwtTest, HasJwtPayloadOutputButNoDataForKey) {
 
 TEST_F(ValidateJwtTest, JwtPayloadAvailableWithBadData) {
   jwt_.set_issuer("issuer@foo.com");
-  (*dynamic_metadata_.mutable_filter_metadata())[Utils::IstioFilterName::kJwt]
-      .MergeFrom(MessageUtil::keyValueStruct("issuer@foo.com", "bad-data"));
+  (*dynamic_metadata_.mutable_filter_metadata())
+      [Extensions::HttpFilters::HttpFilterNames::get().JwtAuthn]
+          .MergeFrom(MessageUtil::keyValueStruct("issuer@foo.com", "bad-data"));
   // EXPECT_CALL(request_info_, dynamicMetadata());
 
   EXPECT_FALSE(authenticator_.validateJwt(jwt_, payload_));
@@ -328,9 +332,16 @@ TEST_F(ValidateJwtTest, JwtPayloadAvailableWithBadData) {
 
 TEST_F(ValidateJwtTest, JwtPayloadAvailable) {
   jwt_.set_issuer("issuer@foo.com");
-  (*dynamic_metadata_.mutable_filter_metadata())[Utils::IstioFilterName::kJwt]
-      .MergeFrom(MessageUtil::keyValueStruct("issuer@foo.com",
-                                             kSecIstioAuthUserinfoHeaderValue));
+  google::protobuf::Struct header_payload;
+  JsonStringToMessage(kSecIstioAuthUserinfoHeaderValue, &header_payload,
+                      google::protobuf::util::JsonParseOptions{});
+  google::protobuf::Struct payload;
+  (*payload.mutable_fields())["issuer@foo.com"]
+      .mutable_struct_value()
+      ->CopyFrom(header_payload);
+  (*dynamic_metadata_.mutable_filter_metadata())
+      [Extensions::HttpFilters::HttpFilterNames::get().JwtAuthn]
+          .MergeFrom(payload);
 
   Payload expected_payload;
   JsonStringToMessage(
@@ -352,16 +363,26 @@ TEST_F(ValidateJwtTest, JwtPayloadAvailable) {
       &expected_payload, google::protobuf::util::JsonParseOptions{});
 
   EXPECT_TRUE(authenticator_.validateJwt(jwt_, payload_));
-  EXPECT_TRUE(MessageDifferencer::Equals(expected_payload, *payload_));
+  MessageDifferencer diff;
+  const google::protobuf::FieldDescriptor* field =
+      expected_payload.jwt().GetDescriptor()->FindFieldByName("raw_claims");
+  diff.IgnoreField(field);
+  EXPECT_TRUE(diff.Compare(expected_payload, *payload_));
 }
 
 TEST_F(ValidateJwtTest, OriginalPayloadOfExchangedToken) {
   jwt_.set_issuer("token-service");
   jwt_.add_jwt_headers(kExchangedTokenHeaderName);
 
-  (*dynamic_metadata_.mutable_filter_metadata())[Utils::IstioFilterName::kJwt]
-      .MergeFrom(
-          MessageUtil::keyValueStruct("token-service", kExchangedTokenPayload));
+  google::protobuf::Struct exchange_token_payload;
+  JsonStringToMessage(kExchangedTokenPayload, &exchange_token_payload,
+                      google::protobuf::util::JsonParseOptions{});
+  google::protobuf::Struct payload;
+  (*payload.mutable_fields())["token-service"].mutable_struct_value()->CopyFrom(
+      exchange_token_payload);
+  (*dynamic_metadata_.mutable_filter_metadata())
+      [Extensions::HttpFilters::HttpFilterNames::get().JwtAuthn]
+          .MergeFrom(payload);
 
   Payload expected_payload;
   JsonStringToMessage(
@@ -396,9 +417,16 @@ TEST_F(ValidateJwtTest, OriginalPayloadOfExchangedTokenMissing) {
   jwt_.set_issuer("token-service");
   jwt_.add_jwt_headers(kExchangedTokenHeaderName);
 
-  (*dynamic_metadata_.mutable_filter_metadata())[Utils::IstioFilterName::kJwt]
-      .MergeFrom(MessageUtil::keyValueStruct(
-          "token-service", kExchangedTokenPayloadNoOriginalClaims));
+  google::protobuf::Struct exchange_token_payload;
+  JsonStringToMessage(kExchangedTokenPayloadNoOriginalClaims,
+                      &exchange_token_payload,
+                      google::protobuf::util::JsonParseOptions{});
+  google::protobuf::Struct payload;
+  (*payload.mutable_fields())["token-service"].mutable_struct_value()->CopyFrom(
+      exchange_token_payload);
+  (*dynamic_metadata_.mutable_filter_metadata())
+      [Extensions::HttpFilters::HttpFilterNames::get().JwtAuthn]
+          .MergeFrom(payload);
 
   // When no original_claims in an exchanged token, the token
   // is treated as invalid.
@@ -408,9 +436,15 @@ TEST_F(ValidateJwtTest, OriginalPayloadOfExchangedTokenMissing) {
 TEST_F(ValidateJwtTest, OriginalPayloadOfExchangedTokenNotInIntendedHeader) {
   jwt_.set_issuer("token-service");
 
-  (*dynamic_metadata_.mutable_filter_metadata())[Utils::IstioFilterName::kJwt]
-      .MergeFrom(
-          MessageUtil::keyValueStruct("token-service", kExchangedTokenPayload));
+  google::protobuf::Struct exchange_token_payload;
+  JsonStringToMessage(kExchangedTokenPayload, &exchange_token_payload,
+                      google::protobuf::util::JsonParseOptions{});
+  google::protobuf::Struct payload;
+  (*payload.mutable_fields())["token-service"].mutable_struct_value()->CopyFrom(
+      exchange_token_payload);
+  (*dynamic_metadata_.mutable_filter_metadata())
+      [Extensions::HttpFilters::HttpFilterNames::get().JwtAuthn]
+          .MergeFrom(payload);
 
   Payload expected_payload;
   JsonStringToMessage(
@@ -432,7 +466,11 @@ TEST_F(ValidateJwtTest, OriginalPayloadOfExchangedTokenNotInIntendedHeader) {
   // When an exchanged token is not in the intended header, the token
   // is treated as a normal token with its claims extracted.
   EXPECT_TRUE(authenticator_.validateJwt(jwt_, payload_));
-  EXPECT_TRUE(MessageDifferencer::Equals(expected_payload, *payload_));
+  MessageDifferencer diff;
+  const google::protobuf::FieldDescriptor* field =
+      expected_payload.jwt().GetDescriptor()->FindFieldByName("raw_claims");
+  diff.IgnoreField(field);
+  EXPECT_TRUE(diff.Compare(expected_payload, *payload_));
 }
 
 }  // namespace

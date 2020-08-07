@@ -80,6 +80,10 @@ build_wasm:
 	export PATH=$(PATH) CC=$(CC) CXX=$(CXX) && bazel $(BAZEL_STARTUP_ARGS) build $(BAZEL_BUILD_ARGS) $(BAZEL_CONFIG_REL) //extensions:stats.wasm
 	export PATH=$(PATH) CC=$(CC) CXX=$(CXX) && bazel $(BAZEL_STARTUP_ARGS) build $(BAZEL_BUILD_ARGS) $(BAZEL_CONFIG_REL) //extensions:metadata_exchange.wasm
 	export PATH=$(PATH) CC=$(CC) CXX=$(CXX) && bazel $(BAZEL_STARTUP_ARGS) build $(BAZEL_BUILD_ARGS) $(BAZEL_CONFIG_REL) //extensions:attributegen.wasm
+	export PATH=$(PATH) CC=$(CC) CXX=$(CXX) && bazel $(BAZEL_STARTUP_ARGS) build $(BAZEL_BUILD_ARGS) $(BAZEL_CONFIG_REL) @envoy//test/tools/wee8_compile:wee8_compile_tool
+	bazel-bin/external/envoy/test/tools/wee8_compile/wee8_compile_tool bazel-bin/extensions/stats.wasm bazel-bin/extensions/stats.compiled.wasm
+	bazel-bin/external/envoy/test/tools/wee8_compile/wee8_compile_tool bazel-bin/extensions/metadata_exchange.wasm bazel-bin/extensions/metadata_exchange.compiled.wasm
+	bazel-bin/external/envoy/test/tools/wee8_compile/wee8_compile_tool bazel-bin/extensions/attributegen.wasm bazel-bin/extensions/attributegen.compiled.wasm
 
 # NOTE: build_wasm has to happen before build_envoy, since the integration test references bazel-bin symbol link for envoy binary,
 # which will be overwritten if wasm build happens after envoy.
@@ -110,7 +114,7 @@ check:
 	@echo >&2 "Please use \"make lint\" instead."
 	@false
 
-lint: lint-copyright-banner format-go lint-go tidy-go
+lint: lint-copyright-banner format-go lint-go tidy-go lint-scripts
 	@scripts/check-repository.sh
 	@scripts/check-style.sh
 
@@ -160,6 +164,13 @@ test_release:
 
 push_release: build
 	export PATH=$(PATH) CC=$(CC) CXX=$(CXX) BAZEL_BUILD_ARGS="$(BAZEL_BUILD_ARGS)" && ./scripts/release-binary.sh -d "$(RELEASE_GCS_PATH)" -p
+
+# Used by build container to export the build output from the docker volume cache
+exportcache:
+	mkdir -p /work/out/linux_amd64
+	cp -a /work/bazel-bin/src/envoy/envoy /work/out/linux_amd64
+	cp -a /work/bazel-bin/extensions/*wasm /work/out/linux_amd64
+
 
 .PHONY: build clean test check artifacts extensions-proto
 

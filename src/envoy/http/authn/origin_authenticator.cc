@@ -30,13 +30,21 @@ namespace Http {
 namespace Istio {
 namespace AuthN {
 
+Http::RegisterCustomInlineHeader<
+    Http::CustomInlineHeaderRegistry::Type::RequestHeaders>
+    access_control_request_method_handle(
+        Http::CustomHeaders::get().AccessControlRequestMethod);
+Http::RegisterCustomInlineHeader<
+    Http::CustomInlineHeaderRegistry::Type::RequestHeaders>
+    origin_handle(Http::CustomHeaders::get().Origin);
+
 bool isCORSPreflightRequest(const Http::RequestHeaderMap& headers) {
   return headers.Method() &&
          headers.Method()->value().getStringView() ==
              Http::Headers::get().MethodValues.Options &&
-         headers.Origin() && !headers.Origin()->value().empty() &&
-         headers.AccessControlRequestMethod() &&
-         !headers.AccessControlRequestMethod()->value().empty();
+         !headers.getInlineValue(origin_handle.handle()).empty() &&
+         !headers.getInlineValue(access_control_request_method_handle.handle())
+              .empty();
 }
 
 OriginAuthenticator::OriginAuthenticator(FilterContext* filter_context,

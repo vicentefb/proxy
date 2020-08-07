@@ -326,12 +326,13 @@ bool PluginRootContext::initializeDimensions(const json& j) {
           if (!JsonArrayIterate(
                   metric, "tags_to_remove", [&](const json& tag) -> bool {
                     auto tag_string = JsonValueAs<std::string>(tag);
-                    if (!tag_string.has_value()) {
+                    if (tag_string.second !=
+                        Wasm::Common::JsonParserResultDetail::OK) {
                       LOG_WARN(
                           absl::StrCat("unexpected tag to remove", tag.dump()));
                       return false;
                     }
-                    auto it = indexes.find(tag_string.value());
+                    auto it = indexes.find(tag_string.first.value());
                     if (it != indexes.end()) {
                       it->second = {};
                     }
@@ -345,11 +346,12 @@ bool PluginRootContext::initializeDimensions(const json& j) {
           for (const auto& tag : tags) {
             auto expr_string =
                 JsonValueAs<std::string>(metric["dimensions"][tag]);
-            if (!expr_string.has_value()) {
+            if (expr_string.second !=
+                Wasm::Common::JsonParserResultDetail::OK) {
               LOG_WARN("failed to parse 'dimensions' value");
               return false;
             }
-            auto expr_index = addStringExpression(expr_string.value());
+            auto expr_index = addStringExpression(expr_string.first.value());
             Optional<size_t> value = {};
             if (expr_index.has_value()) {
               value = count_standard_labels + expr_index.value();
@@ -433,16 +435,15 @@ bool PluginRootContext::configure(size_t configuration_size) {
     LOG_WARN("cannot parse local node metadata ");
     return false;
   }
-  outbound_ = ::Wasm::Common::TrafficDirection::Outbound ==
-              ::Wasm::Common::getTrafficDirection();
 
-  auto j = ::Wasm::Common::JsonParse(configuration_data->view());
-  if (!j.is_object()) {
-    LOG_WARN(absl::StrCat("cannot parse configuration as JSON: ",
+  auto result = ::Wasm::Common::JsonParse(configuration_data->view());
+  if (!result.has_value()) {
+    LOG_WARN(absl::StrCat("cannot parse plugin configuration JSON string: ",
                           configuration_data->view()));
     return false;
   }
 
+  auto j = result.value();
   if (outbound_) {
     peer_metadata_id_key_ = ::Wasm::Common::kUpstreamMetadataIdKey;
     peer_metadata_key_ = ::Wasm::Common::kUpstreamMetadataKey;
@@ -460,15 +461,16 @@ bool PluginRootContext::configure(size_t configuration_size) {
   }
 
   uint32_t tcp_report_duration_milis = kDefaultTCPReportDurationMilliseconds;
-  auto tcp_reporting_duration =
+  auto tcp_reporting_duration_field =
       JsonGetField<std::string>(j, "tcp_reporting_duration");
   absl::Duration duration;
-  if (tcp_reporting_duration.has_value()) {
-    if (absl::ParseDuration(tcp_reporting_duration.value(), &duration)) {
+  if (tcp_reporting_duration_field.detail() ==
+      ::Wasm::Common::JsonParserResultDetail::OK) {
+    if (absl::ParseDuration(tcp_reporting_duration_field.value(), &duration)) {
       tcp_report_duration_milis = uint32_t(duration / absl::Milliseconds(1));
     } else {
       LOG_WARN(absl::StrCat("failed to parse 'tcp_reporting_duration': ",
-                            tcp_reporting_duration.value()));
+                            tcp_reporting_duration_field.value()));
     }
   }
   proxy_set_tick_period_milliseconds(tcp_report_duration_milis);
@@ -546,11 +548,11 @@ void PluginRootContext::onTick() {
 bool PluginRootContext::report(::Wasm::Common::RequestInfo& request_info,
                                bool is_tcp) {
   std::string peer_id;
-  getValue({peer_metadata_id_key_}, &peer_id);
+  bool peer_found = getValue({peer_metadata_id_key_}, &peer_id);
 
   std::string peer;
   const ::Wasm::Common::FlatNode* peer_node =
-      getValue({peer_metadata_key_}, &peer)
+      peer_found && getValue({peer_metadata_key_}, &peer)
           ? flatbuffers::GetRoot<::Wasm::Common::FlatNode>(peer.data())
           : nullptr;
 
@@ -572,9 +574,7 @@ bool PluginRootContext::report(::Wasm::Common::RequestInfo& request_info,
     // been no error in connection.
     uint64_t response_flags = 0;
     getValue({"response", "flags"}, &response_flags);
-    if (peer_node == nullptr &&
-        peer_id != ::Wasm::Common::kMetadataNotFoundValue &&
-        response_flags == 0) {
+    if (!peer_found && response_flags == 0) {
       return false;
     }
     if (!request_info.is_populated) {

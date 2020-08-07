@@ -44,6 +44,8 @@ constexpr StringView kAccessLogPolicyKey = "istio.access_log_policy";
 constexpr StringView kAuthorityHeaderKey = ":authority";
 constexpr StringView kMethodHeaderKey = ":method";
 constexpr StringView kContentTypeHeaderKey = "content-type";
+constexpr StringView kEnvoyOriginalDstHostKey = "x-envoy-original-dst-host";
+constexpr StringView kEnvoyOriginalPathKey = "x-envoy-original-path";
 
 const std::string kProtocolHTTP = "http";
 const std::string kProtocolGRPC = "grpc";
@@ -106,7 +108,7 @@ struct RequestInfo {
   uint32_t destination_port = 0;
 
   // Source port of the client.
-  uint32_t source_port = 0;
+  uint64_t source_port = 0;
 
   // Protocol used the request (HTTP/1.1, gRPC, etc).
   std::string request_protocol;
@@ -142,10 +144,21 @@ struct RequestInfo {
   std::string source_principal;
   std::string destination_principal;
 
+  // Connection id of the TCP connection.
+  uint64_t connection_id;
+
   // The following fields will only be populated by calling
   // populateExtendedHTTPRequestInfo.
   std::string source_address;
   std::string destination_address;
+
+  // Additional fields for access log.
+  std::string route_name;
+  std::string upstream_host;
+  std::string upstream_cluster;
+  std::string request_serever_name;
+  std::string x_envoy_original_path;
+  std::string x_envoy_original_dst_host;
 
   // Important Headers.
   std::string referer;
@@ -170,6 +183,7 @@ struct RequestInfo {
   TCPConnectionState tcp_connection_state = TCPConnectionState::Unspecified;
 
   bool is_populated = false;
+  bool log_sampled = false;
 };
 
 // RequestContext contains all the information available in the request.

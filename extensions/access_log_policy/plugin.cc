@@ -37,6 +37,7 @@ namespace Plugin {
 
 using google::protobuf::util::JsonParseOptions;
 using google::protobuf::util::Status;
+using proxy_wasm::WasmHeaderMapType;
 
 PROXY_WASM_NULL_PLUGIN_REGISTRY;
 
@@ -159,7 +160,7 @@ bool PluginContext::isRequestFailed() {
   // Check if HTTP request is a failure.
   int64_t http_response_code = 0;
   if (getValue({kResponse, kCode}, &http_response_code) &&
-      http_response_code != 200) {
+      http_response_code >= 400) {
     return true;
   }
 

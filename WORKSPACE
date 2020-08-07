@@ -22,12 +22,12 @@ load(
     "//:repositories.bzl",
     "docker_dependencies",
     "googletest_repositories",
-    "mixerapi_dependencies",
+    "istioapi_dependencies",
 )
 
 googletest_repositories()
 
-mixerapi_dependencies()
+istioapi_dependencies()
 
 bind(
     name = "boringssl_crypto",
@@ -37,10 +37,11 @@ bind(
 # 1. Determine SHA256 `wget https://github.com/envoyproxy/envoy-wasm/archive/$COMMIT.tar.gz && sha256sum $COMMIT.tar.gz`
 # 2. Update .bazelversion, envoy.bazelrc and .bazelrc if needed.
 #
-# Commit time: 5/19/20
-ENVOY_SHA = "ee990c97332793e29eff11fa2773996857a5f5d3"
+# Note: this is needed by release builder to resolve envoy dep sha to tag.
+# Commit date: 7/20/20
+ENVOY_SHA = "5dca4c64067783b463af7698411dd7a1d9cc5333"
 
-ENVOY_SHA256 = "92b0d107d316371165c6ecd83ca24d0b1e791224a737ba386e9d58217d517209"
+ENVOY_SHA256 = "4550dfbf5fff8b73c8a3a5fe616c7541dad6e079c93f186c5183a9d56a5d628a"
 
 ENVOY_ORG = "envoyproxy"
 
@@ -66,6 +67,10 @@ envoy_api_dependencies()
 load("@envoy//bazel:repositories.bzl", "envoy_dependencies")
 
 envoy_dependencies()
+
+load("@envoy//bazel:repositories_extra.bzl", "envoy_dependencies_extra")
+
+envoy_dependencies_extra()
 
 load("@envoy//bazel:dependency_imports.bzl", "envoy_dependency_imports")
 
@@ -129,17 +134,4 @@ http_file(
     urls = [
         "https://github.com/nlohmann/json/releases/download/v3.7.3/json.hpp",
     ],
-)
-
-COM_GOOGLE_ABSL_WASM_SHA = "768eb2ca2857342673fcd462792ce04b8bac3fa3"
-
-http_archive(
-    name = "com_google_absl_wasm",
-    patch_args = ["-p1"],
-    patches = [
-        "@io_istio_proxy//:bazel/patches/absl.patch",
-    ],
-    sha256 = "bc9dd47d9676b016a8bec86f4e1cdc3edd22042bd9d7948a7b355f600974565e",
-    strip_prefix = "abseil-cpp-" + COM_GOOGLE_ABSL_WASM_SHA,
-    url = "https://github.com/abseil/abseil-cpp/archive/" + COM_GOOGLE_ABSL_WASM_SHA + ".tar.gz",
 )
